@@ -1,5 +1,9 @@
-FROM scratch
+FROM golang:latest
 
-ADD bin/generic-autoscaler-controller /generic-autoscaler-controller
+WORKDIR /app
 
-ENTRYPOINT ["/generic-autoscaler-controller"]
+COPY . .
+
+RUN go build -o main .
+
+ENTRYPOINT ["./main"]
