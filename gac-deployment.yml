@@ -1,14 +1,61 @@
-kind: Deployment
-apiVersion: apps/v1beta1
+kind: Namespace
+apiVersion: v1
 metadata:
-  name: generic-autoscaler-controller
-  namespace: monitoring
+  name: autoscaling
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: gac
+  namespace: autoscaling
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gac-custom-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-resource-reader
+subjects:
+  - kind: ServiceAccount
+    name: gac
+    namespace: autoscaling
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: deployment-access
+rules:
+  - apiGroups: [""]
+    resources: ["deployments", "pods"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gac-resource-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: deployment-access
+subjects:
+  - kind: ServiceAccount
+    name: gac
+    namespace: autoscaling
+---
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: gac-deployment
+  namespace: custom-metrics
 spec:
   template:
     metadata:
       labels:
         app: generic-autoscaler-controller
     spec:
+      serviceAccountName: generic-autoscaler-controller
       containers:
         - name: generic-autoscaler-controller-container
           image: freddyfroehlich/generic-autoscaler-controller:latest
