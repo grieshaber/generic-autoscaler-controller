@@ -1,0 +1,48 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: autoscalingrules.bsinfo.hhu.de
+  namespace: autoscaling
+spec:
+  group: bsinfo.hhu.de
+  versions:
+    - name: v1
+      served: true
+      storage: true
+  scope: Namespaced
+  names:
+    plural: autoscalingrules
+    singular: autoscalingrule
+    kind: AutoscalingRule
+    shortNames:
+      - asr
+  validation:
+    openAPIV3Schema:
+      type: object
+      properties:
+        spec:
+          type: object
+          properties:
+            metricName:
+              type: string
+            modes:
+              type: object
+              properties:
+                upscaling:
+                  type: string
+                downscaling:
+                  type: string
+            priority:
+              type: integer
+              minimum: 1
+              maximum: 5
+            thresholds:
+              type: object
+              properties:
+                upperThreshold:
+                  type: string
+                lowerThreshold:
+                  type: string
+                maxViolationCount:
+                  type: integer
+                  minimum: 1

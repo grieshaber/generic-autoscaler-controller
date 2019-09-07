@@ -1,0 +1,15 @@
+apiVersion: bsinfo.hhu.de/v1
+kind: AutoscalingRule
+metadata:
+  name: memory-usage-rule
+  namespace: autoscaling
+spec:
+  metricName: de_hhu_bsinfo_Storage_MemoryUsage
+  modes:
+    upscaling: mild
+    downscaling: mild
+  priority: 5
+  thresholds:
+    upperThreshold: 800m
+    lowerThreshold: 200m
+    maxViolationCount: 3

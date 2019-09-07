@@ -1,5 +1,5 @@
-kind: Namespace
 apiVersion: v1
+kind: Namespace
 metadata:
   name: autoscaling
 ---
@@ -12,11 +12,11 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: gac-custom-metrics
+  name: gac-resource-reader
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: custom-metrics-resource-reader
+  name: custom-metrics-server-resources
 subjects:
   - kind: ServiceAccount
     name: gac
@@ -27,8 +27,17 @@ kind: ClusterRole
 metadata:
   name: deployment-access
 rules:
-  - apiGroups: [""]
-    resources: ["deployments", "pods"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crd-access
+rules:
+  - apiGroups: ["bsinfo.hhu.de"]
+    resources: ["autoscalingrules"]
     verbs: ["*"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -44,18 +53,36 @@ subjects:
     name: gac
     namespace: autoscaling
 ---
-apiVersion: apps/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gac-crd-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crd-access
+subjects:
+  - kind: ServiceAccount
+    name: gac
+    namespace: autoscaling
+---
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: gac-deployment
-  namespace: custom-metrics
+  namespace: autoscaling
+  labels:
+    app: generic-autoscaler-controller
 spec:
+  selector:
+    matchLabels:
+      app: generic-autoscaler-controller
   template:
     metadata:
       labels:
         app: generic-autoscaler-controller
     spec:
-      serviceAccountName: generic-autoscaler-controller
+      serviceAccountName: gac
       containers:
         - name: generic-autoscaler-controller-container
           image: freddyfroehlich/generic-autoscaler-controller:latest
