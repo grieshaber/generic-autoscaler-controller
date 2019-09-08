@@ -30,13 +30,15 @@ var waitGroup *sync.WaitGroup
 type Autoscaler struct {
 	kubeclientset     *kubernetes.Clientset
 	interval          time.Duration
-	rules             map[string]v1.AutoscalingRule
+	rules             map[string]*v1.AutoscalingRule
 	metricEvaluations map[*v1.AutoscalingRule]*util.MetricEvaluation
-	shouldScale       bool
+	minReplicas       int32
+	maxReplicas       int32
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, rules map[string]v1.AutoscalingRule) *Autoscaler {
-	return &Autoscaler{kubeclientset: kubeclientset, interval: interval, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation)}
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscaler {
+	return &Autoscaler{kubeclientset: kubeclientset, interval: interval, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
+		minReplicas: minReplicas, maxReplicas: maxReplicas}
 }
 
 func (as Autoscaler) Run() {
@@ -53,108 +55,99 @@ func (as Autoscaler) Run() {
 	}()
 }
 
-func (as Autoscaler) evaluateRule(rule v1.AutoscalingRule, replicasOld int32) {
+func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
 	defer waitGroup.Done()
 	log.Debugf("Evaluating rule %s", rule.Name)
-	fmt.Println(as.metricEvaluations[&rule])
-	fmt.Println(&rule)
-	fmt.Println(len(as.metricEvaluations))
-	if _, initialized := as.metricEvaluations[&rule]; !initialized {
+
+	if _, initialized := as.metricEvaluations[rule]; !initialized {
 		log.Debugf("Initializing new MetricEvaluation Object for rule %s", rule.Name)
-		as.metricEvaluations[&rule] = &util.MetricEvaluation{Replicas: float64(replicasOld)}
+		as.metricEvaluations[rule] = util.NewMetricEvaluation(float64(replicasOld))
 	}
 
-	metricEvaluation := as.metricEvaluations[&rule]
+	metricEvaluation := as.metricEvaluations[rule]
 	metric, err := getMetrics(as.kubeclientset, rule.Spec.MetricName)
 
 	if err != nil {
-		log.Panicf("Could not retrieve metrics for rule %s", rule.Name, err)
+		log.Errorf("Could not retrieve metrics for rule %s", rule.Name, err)
+		return
 	}
 
 	value, err := resource.ParseQuantity(metric.Items[0].Value)
 	if err != nil {
-		log.Panicf("Could not parse metric for rule %s", rule.Name, err)
+		log.Errorf("Could not parse metric for rule %s", rule.Name, err)
+		return
 	}
 
 	if value.Cmp(rule.Spec.Thresholds.UpperThreshold)+1 >= 1 {
 		// UpperThreshold reached
 		log.Debugf("Upper threshold reached for rule %s", rule.Name)
-		if metricEvaluation.Higher {
+		if metricEvaluation.Higher && replicasOld < as.maxReplicas{
 			metricEvaluation.ViolationCount++
 			if metricEvaluation.ViolationCount >= rule.Spec.Thresholds.MaxViolationCount {
 				log.Debugf("Max violation count %f reached for rule %s", rule.Spec.Thresholds.MaxViolationCount, rule.Name)
 				// calc new replicas!
 				var (
 					newReplicas float64
-					err         error
 				)
 				switch rule.Spec.Modes.UpscalingMode {
 				case "mild":
-					newReplicas, err = Mild.upScalingFunction(replicasOld)
+					newReplicas = Mild.upScalingFunction(replicasOld)
 				case "medium":
-					newReplicas, err = Medium.upScalingFunction(replicasOld)
+					newReplicas = Medium.upScalingFunction(replicasOld)
 				case "aggressive":
-					newReplicas, err = Aggressive.upScalingFunction(replicasOld)
+					newReplicas = Aggressive.upScalingFunction(replicasOld)
 				default:
-					log.Warn("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
-				}
-
-				if err != nil {
-					log.Error("Could not calculate new replicas", err)
+					log.Warnf("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
 					return
 				}
+
 				metricEvaluation.Replicas = newReplicas
-				as.shouldScale = true
-				return
+				metricEvaluation.ViolationCount = 0
 			}
+		} else {
+			// Reset violation count, if latest violation was at lower threshold
+			metricEvaluation.Higher = true
+			metricEvaluation.ViolationCount = 1
 		}
-		// Reset violation count, if latest violation was at lower threshold
-		metricEvaluation.Higher = true
-		metricEvaluation.ViolationCount = 1
-		return
 	} else if value.Cmp(rule.Spec.Thresholds.LowerThreshold)-1 <= -1 {
 		log.Debugf("Lower threshold reached for rule %s", rule.Name)
 		// lowerThreshold reached
-		if !metricEvaluation.Higher {
+		if !metricEvaluation.Higher && replicasOld > as.minReplicas {
 			metricEvaluation.ViolationCount++
 			if metricEvaluation.ViolationCount >= rule.Spec.Thresholds.MaxViolationCount {
 				log.Debugf("Max violation count %f reached for rule %s", rule.Spec.Thresholds.MaxViolationCount, rule.Name)
 				// calc new replicas!
 				var (
 					newReplicas float64
-					err         error
 				)
 				switch rule.Spec.Modes.DownscalingMode {
 				case "mild":
-					newReplicas, err = Mild.downScalingFunction(replicasOld)
+					newReplicas = Mild.downScalingFunction(replicasOld)
 				case "medium":
-					newReplicas, err = Medium.downScalingFunction(replicasOld)
+					newReplicas = Medium.downScalingFunction(replicasOld)
 				case "aggressive":
-					newReplicas, err = Aggressive.downScalingFunction(replicasOld)
+					newReplicas = Aggressive.downScalingFunction(replicasOld)
 				default:
-					log.Warn("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
-				}
-
-				if err != nil {
-					log.Error("Could not calculate new replicas", err)
+					log.Warnf("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
 					return
 				}
+
 				metricEvaluation.Replicas = newReplicas
-				as.shouldScale = true
-				return
+				// reset countin
+				metricEvaluation.ViolationCount = 0
 			}
+		} else {
+			// Reset violation count, if latest violation was at upper threshold
+			metricEvaluation.Higher = false
+			metricEvaluation.ViolationCount = 1
 		}
-		// Reset violation count, if latest violation was at upper threshold
-		metricEvaluation.Higher = false
-		metricEvaluation.ViolationCount = 1
-		return
+	} else {
+		// if metric is in normal range again, reduce violation count
+		log.Debugf("Metric for rule %s in normal range", rule.Name)
+		if metricEvaluation.ViolationCount >= 0.33 {
+			metricEvaluation.ViolationCount -= 0.33
+		}
 	}
-	// if metric is in normal range again, reduce violation count
-	log.Debugf("Metric for rule %s in normal range", rule.Name)
-	if metricEvaluation.ViolationCount >= 0.33 {
-		metricEvaluation.ViolationCount -= 0.33
-	}
-	return
 }
 
 func (as Autoscaler) evaluateRules() error {
@@ -178,37 +171,35 @@ func (as Autoscaler) evaluateRules() error {
 	}
 	// Wait for all rules to be evaluated
 	waitGroup.Wait()
-
-	util.LogTable(as.metricEvaluations)
 	log.Debug("All metrics evaluated.")
+	util.LogTable(as.metricEvaluations)
 
-	if as.shouldScale {
-		log.Info("Metrics fired, calculate new replica count..")
-		// calculate new replica as a by priority weighted sum
-		var (
-			weights          int32
-			weightedReplicas float64
-		)
+	// calculate new replica as a by priority weighted sum
+	var (
+		weights          int32
+		weightedReplicas float64
+	)
 
-		for rule, metricEvaluation := range as.metricEvaluations {
-			priority := rule.Spec.Priority
-			desiredReplicas := metricEvaluation.Replicas
+	for rule, metricEvaluation := range as.metricEvaluations {
+		priority := rule.Spec.Priority
+		desiredReplicas := metricEvaluation.Replicas
 
-			weights += priority
-			weightedReplicas += desiredReplicas * float64(priority)
+		weights += priority
+		weightedReplicas += desiredReplicas * float64(priority)
+	}
+
+	newDesiredReplicas := int32(math.Round(weightedReplicas / float64(weights)))
+
+	log.Infof("New desired replica count: %d", newDesiredReplicas)
+	if newDesiredReplicas != deployment.Status.Replicas {
+		// New desired Replicas! Should scale..
+		deployment.Spec.Replicas = &newDesiredReplicas
+		_, err := deployments.Update(deployment)
+
+		if err == nil {
+			log.Info("Scaled deployment!")
 		}
-
-		newDesiredReplicas := int32(math.Round(weightedReplicas / float64(weights)))
-
-		log.Info("New desired replica count: %d", newDesiredReplicas)
-		if newDesiredReplicas != deployment.Status.Replicas {
-			// New desired Replicas! Should scale..
-			deployment.Spec.Replicas = &newDesiredReplicas
-
-			// _, err := deployments.Update(deployment)
-
-			return err
-		}
+		return err
 	}
 
 	return err

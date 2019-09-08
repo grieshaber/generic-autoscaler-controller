@@ -18,8 +18,8 @@ import (
 
 type AutoscalingPolicy struct {
 	name                string
-	upScalingFunction   func(replicas int32) (float64, error)
-	downScalingFunction func(replicas int32) (float64, error)
+	upScalingFunction   func(replicas int32) float64
+	downScalingFunction func(replicas int32) float64
 }
 
 var (
@@ -29,29 +29,29 @@ var (
 )
 
 // MILD
-func mildUpscalingFunction(replicasOld int32) (float64, error) {
-	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.15), nil
+func mildUpscalingFunction(replicasOld int32) float64 {
+	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.15)
 }
 
-func mildDownscalingFunction(replicasOld int32) (float64, error) {
-	return math.Min(float64(replicasOld-1), float64(replicasOld) * 0.85), nil
+func mildDownscalingFunction(replicasOld int32) float64 {
+	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.85)
 }
 
 // MEDIUM
-func mediumUpscalingFunction(replicasOld int32) (float64, error) {
-	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.3), nil
+func mediumUpscalingFunction(replicasOld int32) float64 {
+	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.3)
 }
 
-func mediumDownscalingFunction(replicasOld int32) (float64, error) {
-	return math.Min(float64(replicasOld-1), float64(replicasOld)* 0.7), nil
+func mediumDownscalingFunction(replicasOld int32) float64 {
+	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.7)
 }
 
 // AGGRESSIVE
-func aggressiveUpscalingFunction(replicasOld int32) (float64, error) {
-	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.5), nil
+func aggressiveUpscalingFunction(replicasOld int32) float64 {
+	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.5)
 }
 
-func aggressiveDownscalingFunction(replicasOld int32) (float64, error) {
-	return math.Min(float64(replicasOld-1), float64(replicasOld) * 0.5), nil
+func aggressiveDownscalingFunction(replicasOld int32) float64 {
+	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.5)
 }
 

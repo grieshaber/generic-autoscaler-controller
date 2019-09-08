@@ -17,3 +17,7 @@ type MetricEvaluation struct {
 	Replicas float64
 	Higher bool
 }
+
+func NewMetricEvaluation(replicas float64) *MetricEvaluation {
+	return &MetricEvaluation{0, replicas, false}
+}

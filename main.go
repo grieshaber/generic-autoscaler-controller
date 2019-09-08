@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-var rules = make(map[string]v1.AutoscalingRule)
+var rules = make(map[string]*v1.AutoscalingRule)
 
 func init() {
 	log.SetLevel(log.DebugLevel)
@@ -82,7 +82,7 @@ func main() {
 	log.Info("Infomer started.")
 
 	log.Debug("Start autoscaler..")
-	scaler := autoscaler.New(clientset, 5*time.Second, rules)
+	scaler := autoscaler.New(clientset, 5*time.Second, rules, 1, 10)
 	go scaler.Run()
 
 	<-stopChan
@@ -91,7 +91,7 @@ func main() {
 
 func onAdd(obj interface{}) {
 	rule := obj.(*v1.AutoscalingRule)
-	rules[rule.Name] = *rule
+	rules[rule.Name] = rule
 	log.Infof("Rule for metric %s added", rule.Spec.MetricName)
 }
 func onDelete(obj interface{}) {

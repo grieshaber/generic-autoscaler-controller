@@ -20,12 +20,16 @@ import (
 )
 
 func LogTable(metricEvaluations map[*v1.AutoscalingRule]*MetricEvaluation) {
+	if len(metricEvaluations) == 0 {
+		return
+	}
+
 	t := table.NewWriter()
 
-	t.AppendHeader(table.Row{"Rule", "Priority", "Violation Count", "Desired Replicas"})
+	t.AppendHeader(table.Row{"Rule", "Priority", "Higher", "Violation Count", "Desired Replicas"})
 
 	for rule, me := range metricEvaluations {
-		t.AppendRow(table.Row{rule.Name, rule.Spec.Priority, me.ViolationCount, me.Replicas})
+		t.AppendRow(table.Row{rule.Name, rule.Spec.Priority, me.Higher, me.ViolationCount, me.Replicas})
 	}
 
 	overview := t.Render()
