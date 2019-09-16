@@ -13,11 +13,11 @@
 package util
 
 type MetricEvaluation struct {
-	ViolationCount float64
-	Replicas float64
-	Higher bool
+	ViolationCount []float64
+	Replicas       float64
+	Higher         bool
 }
 
 func NewMetricEvaluation(replicas float64) *MetricEvaluation {
-	return &MetricEvaluation{0, replicas, false}
+	return &MetricEvaluation{make([]float64, 1, 5), replicas, false}
 }

@@ -10,10 +10,11 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 
-package autoscaler
+package metrics
 
 import (
 	"encoding/json"
+	v1 "github.com/grieshaber/generic-autoscaler-controller/pkg/apis/autoscalingrule/v1"
 	"k8s.io/client-go/kubernetes"
 	"time"
 )
@@ -26,9 +27,9 @@ type Metric struct {
 	} `json:"metadata"`
 	Items []struct {
 		DescribedObject struct {
-			Kind       string `json:"kind"`
-			Namespace  string `json:"namespace"`
-			Name       string `json:"name"`
+			Kind      string `json:"kind"`
+			Namespace string `json:"namespace"`
+			Name      string `json:"name"`
 		} `json:"describedObject"`
 		Timestamp  time.Time `json:"timestamp"`
 		MetricName string    `json:"metricName"`
@@ -36,7 +37,7 @@ type Metric struct {
 	} `json:"items"`
 }
 
-func getMetrics(clientset *kubernetes.Clientset, metricName string) (Metric, error) {
+func GetMetric(clientset *kubernetes.Clientset, metricName string) (Metric, error) {
 	var metric Metric
 	data, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", metricName).DoRaw()
 	if err != nil {
@@ -47,3 +48,26 @@ func getMetrics(clientset *kubernetes.Clientset, metricName string) (Metric, err
 	return metric, err
 }
 
+func GetMetrics(clientset *kubernetes.Clientset, autoMode v1.AutoMode) (Metric, Metric, error) {
+	var valueMetric Metric
+	var deltaMetric Metric
+
+	valueData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", autoMode.ValueMetric).DoRaw()
+	if err != nil {
+		return valueMetric, deltaMetric, err
+	}
+
+	err = json.Unmarshal(valueData, &valueMetric)
+
+	if err != nil {
+		return valueMetric, deltaMetric, err
+	}
+
+	deltaData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", autoMode.DeltaMetric).DoRaw()
+	if err != nil {
+		return valueMetric, deltaMetric, err
+	}
+
+	err = json.Unmarshal(deltaData, &deltaMetric)
+	return valueMetric, deltaMetric, err
+}

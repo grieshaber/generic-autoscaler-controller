@@ -1,0 +1,18 @@
+apiVersion: bsinfo.hhu.de/v1
+kind: AutoscalingRule
+metadata:
+  name: auto-usage-memory-rule
+  namespace: autoscaling
+spec:
+  priority: 1
+  autoMode:
+    deltaMetric: de_hhu_bsinfo_Storage_MemoryUsage_Delta
+    valueMetric: de_hhu_bsinfo_Storage_MemoryUsage
+    thresholdsAdv:
+      upperThresholds:
+        highUp: 800m
+        lowUp: 750m
+      lowerThresholds:
+        highDown: 250m
+        lowDown: 200m
+      maxViolationCount: 5

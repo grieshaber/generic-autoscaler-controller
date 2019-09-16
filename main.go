@@ -15,7 +15,7 @@ package main
 import (
 	log "github.com/Sirupsen/logrus"
 	v1 "github.com/grieshaber/generic-autoscaler-controller/pkg/apis/autoscalingrule/v1"
-	"github.com/grieshaber/generic-autoscaler-controller/pkg/autoscaler"
+	"github.com/grieshaber/generic-autoscaler-controller/pkg/autoscalerv2"
 	"github.com/grieshaber/generic-autoscaler-controller/pkg/client/clientset/versioned"
 	"github.com/grieshaber/generic-autoscaler-controller/pkg/client/informers/externalversions"
 	"k8s.io/client-go/kubernetes"
@@ -82,7 +82,7 @@ func main() {
 	log.Info("Infomer started.")
 
 	log.Debug("Start autoscaler..")
-	scaler := autoscaler.New(clientset, 5*time.Second, rules, 1, 10)
+	scaler := autoscalerv2.New(clientset, 5*time.Second, 2, rules, 1, 10)
 	go scaler.Run()
 
 	<-stopChan
@@ -92,10 +92,10 @@ func main() {
 func onAdd(obj interface{}) {
 	rule := obj.(*v1.AutoscalingRule)
 	rules[rule.Name] = rule
-	log.Infof("Rule for metric %s added", rule.Spec.MetricName)
+	log.Infof("Rule added: %s", rule.Name)
 }
 func onDelete(obj interface{}) {
 	rule := obj.(*v1.AutoscalingRule)
 	delete(rules, rule.Name)
-	log.Infof("Rule for metric %s deleted", rule.Spec.MetricName)
+	log.Infof("Rule %s deleted", rule.Name)
 }

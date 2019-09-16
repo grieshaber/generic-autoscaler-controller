@@ -10,7 +10,7 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
 
-package autoscaler
+package policies
 
 import (
 	"math"
@@ -18,14 +18,14 @@ import (
 
 type AutoscalingPolicy struct {
 	name                string
-	upScalingFunction   func(replicas int32) float64
-	downScalingFunction func(replicas int32) float64
+	UpScalingFunction   func(replicas int32) float64
+	DownScalingFunction func(replicas int32) float64
 }
 
 var (
 	Mild       = AutoscalingPolicy{"mild", mildUpscalingFunction, mildDownscalingFunction}
-	Medium     = AutoscalingPolicy{"mild", mediumUpscalingFunction, mediumDownscalingFunction}
-	Aggressive = AutoscalingPolicy{"mild", aggressiveUpscalingFunction, aggressiveDownscalingFunction}
+	Medium     = AutoscalingPolicy{"medium", mediumUpscalingFunction, mediumDownscalingFunction}
+	Strong = AutoscalingPolicy{"strong", strongUpscalingFunction, strongDownscalingFunction}
 )
 
 // MILD
@@ -43,15 +43,15 @@ func mediumUpscalingFunction(replicasOld int32) float64 {
 }
 
 func mediumDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.7)
+	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.75)
 }
 
-// AGGRESSIVE
-func aggressiveUpscalingFunction(replicasOld int32) float64 {
+// STRONG
+func strongUpscalingFunction(replicasOld int32) float64 {
 	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.5)
 }
 
-func aggressiveDownscalingFunction(replicasOld int32) float64 {
+func strongDownscalingFunction(replicasOld int32) float64 {
 	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.5)
 }
 

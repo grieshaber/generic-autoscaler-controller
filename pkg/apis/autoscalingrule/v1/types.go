@@ -32,6 +32,7 @@ type AutoscalingRuleSpec struct {
 	Modes      Modes      `json:"modes"`
 	Priority   int32      `json:"priority"`
 	Thresholds Thresholds `json:"thresholds"`
+	AutoMode   AutoMode   `json:"autoMode"`
 }
 
 type Modes struct {
@@ -43,6 +44,28 @@ type Thresholds struct {
 	UpperThreshold    resource.Quantity `json:"upperThreshold"`
 	LowerThreshold    resource.Quantity `json:"lowerThreshold"`
 	MaxViolationCount float64           `json:"maxViolationCount"`
+}
+
+type AutoMode struct {
+	DeltaMetric   string        `json:"deltaMetric"`
+	ValueMetric   string        `json:"valueMetric"`
+	ThresholdsAdv ThresholdsAdv `json:"thresholdsAdv"`
+}
+
+type ThresholdsAdv struct {
+	UpperThresholds   UpperThresholds `json:"upperThresholds"`
+	LowerThresholds   LowerThresholds `json:"lowerThresholds"`
+	MaxViolationCount float64         `json:"maxViolationCount"`
+}
+
+type UpperThresholds struct {
+	HighUp resource.Quantity `json:"highUp"`
+	LowUp  resource.Quantity `json:"lowUp"`
+}
+
+type LowerThresholds struct {
+	HighDown resource.Quantity `json:"highDown"`
+	LowDown  resource.Quantity `json:"lowDown"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

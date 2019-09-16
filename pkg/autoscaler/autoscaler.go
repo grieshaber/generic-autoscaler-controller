@@ -16,6 +16,8 @@ import (
 	"fmt"
 	log "github.com/Sirupsen/logrus"
 	v1 "github.com/grieshaber/generic-autoscaler-controller/pkg/apis/autoscalingrule/v1"
+	"github.com/grieshaber/generic-autoscaler-controller/pkg/metrics"
+	"github.com/grieshaber/generic-autoscaler-controller/pkg/policies"
 	"github.com/grieshaber/generic-autoscaler-controller/util"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,14 +32,16 @@ var waitGroup *sync.WaitGroup
 type Autoscaler struct {
 	kubeclientset     *kubernetes.Clientset
 	interval          time.Duration
+	calmdown          bool
+	calmdownIntervals int32
 	rules             map[string]*v1.AutoscalingRule
 	metricEvaluations map[*v1.AutoscalingRule]*util.MetricEvaluation
 	minReplicas       int32
 	maxReplicas       int32
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscaler {
-	return &Autoscaler{kubeclientset: kubeclientset, interval: interval, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, calmdownIntervals int32, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscaler {
+	return &Autoscaler{kubeclientset: kubeclientset, interval: interval, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
 		minReplicas: minReplicas, maxReplicas: maxReplicas}
 }
 
@@ -48,11 +52,55 @@ func (as Autoscaler) Run() {
 	ticker := time.NewTicker(as.interval)
 	go func() {
 		for range ticker.C {
-			if err := as.evaluateRules(); err != nil {
-				log.Error("Error while evaluating rules", err)
+			remainingCalmdownIntervals := as.calmdownIntervals
+			if as.calmdown {
+				log.Debugf("Calming down after scaling (remaining calmdown intervals %d/%d)", remainingCalmdownIntervals, as.calmdownIntervals)
+				remainingCalmdownIntervals--
+				if remainingCalmdownIntervals == 0 {
+					as.calmdown = false
+				}
+			} else {
+				if err := as.evaluateRules(); err != nil {
+					log.Error("Error while evaluating rules", err)
+				}
 			}
 		}
 	}()
+}
+
+func calculateNewReplicas(rule *v1.AutoscalingRule, replicasOld int32, scaleUp bool) float64 {
+	var (
+		mode string
+	)
+	if scaleUp {
+		mode = rule.Spec.Modes.UpscalingMode
+	} else {
+		mode = rule.Spec.Modes.DownscalingMode
+	}
+
+	switch mode {
+	case "mild":
+		if scaleUp {
+			return policies.Mild.UpScalingFunction(replicasOld)
+		} else {
+			return policies.Mild.DownScalingFunction(replicasOld)
+		}
+	case "medium":
+		if scaleUp {
+			return policies.Medium.UpScalingFunction(replicasOld)
+		} else {
+			return policies.Medium.DownScalingFunction(replicasOld)
+		}
+	case "strong":
+		if scaleUp {
+			return policies.Strong.UpScalingFunction(replicasOld)
+		} else {
+			return policies.Strong.DownScalingFunction(replicasOld)
+		}
+	default:
+		log.Warnf("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
+		return float64(replicasOld)
+	}
 }
 
 func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
@@ -65,7 +113,7 @@ func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
 	}
 
 	metricEvaluation := as.metricEvaluations[rule]
-	metric, err := getMetrics(as.kubeclientset, rule.Spec.MetricName)
+	metric, err := metrics.GetMetric(as.kubeclientset, rule.Spec.MetricName)
 
 	if err != nil {
 		log.Errorf("Could not retrieve metrics for rule %s", rule.Name, err)
@@ -81,71 +129,44 @@ func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
 	if value.Cmp(rule.Spec.Thresholds.UpperThreshold)+1 >= 1 {
 		// UpperThreshold reached
 		log.Debugf("Upper threshold reached for rule %s", rule.Name)
-		if metricEvaluation.Higher && replicasOld < as.maxReplicas{
-			metricEvaluation.ViolationCount++
-			if metricEvaluation.ViolationCount >= rule.Spec.Thresholds.MaxViolationCount {
+		if metricEvaluation.Higher && replicasOld < as.maxReplicas {
+			metricEvaluation.ViolationCount[0]++
+			if metricEvaluation.ViolationCount[0] >= rule.Spec.Thresholds.MaxViolationCount {
 				log.Debugf("Max violation count %f reached for rule %s", rule.Spec.Thresholds.MaxViolationCount, rule.Name)
 				// calc new replicas!
-				var (
-					newReplicas float64
-				)
-				switch rule.Spec.Modes.UpscalingMode {
-				case "mild":
-					newReplicas = Mild.upScalingFunction(replicasOld)
-				case "medium":
-					newReplicas = Medium.upScalingFunction(replicasOld)
-				case "aggressive":
-					newReplicas = Aggressive.upScalingFunction(replicasOld)
-				default:
-					log.Warnf("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
-					return
-				}
-
+				newReplicas := calculateNewReplicas(rule, replicasOld, true)
 				metricEvaluation.Replicas = newReplicas
-				metricEvaluation.ViolationCount = 0
+				metricEvaluation.ViolationCount[0] = 0
 			}
 		} else {
 			// Reset violation count, if latest violation was at lower threshold
 			metricEvaluation.Higher = true
-			metricEvaluation.ViolationCount = 1
+			metricEvaluation.ViolationCount[0] = 1
 		}
 	} else if value.Cmp(rule.Spec.Thresholds.LowerThreshold)-1 <= -1 {
 		log.Debugf("Lower threshold reached for rule %s", rule.Name)
 		// lowerThreshold reached
 		if !metricEvaluation.Higher && replicasOld > as.minReplicas {
-			metricEvaluation.ViolationCount++
-			if metricEvaluation.ViolationCount >= rule.Spec.Thresholds.MaxViolationCount {
+			metricEvaluation.ViolationCount[0]++
+			if metricEvaluation.ViolationCount[0] >= rule.Spec.Thresholds.MaxViolationCount {
 				log.Debugf("Max violation count %f reached for rule %s", rule.Spec.Thresholds.MaxViolationCount, rule.Name)
 				// calc new replicas!
-				var (
-					newReplicas float64
-				)
-				switch rule.Spec.Modes.DownscalingMode {
-				case "mild":
-					newReplicas = Mild.downScalingFunction(replicasOld)
-				case "medium":
-					newReplicas = Medium.downScalingFunction(replicasOld)
-				case "aggressive":
-					newReplicas = Aggressive.downScalingFunction(replicasOld)
-				default:
-					log.Warnf("Unsupported scaling mode: %s", rule.Spec.Modes.UpscalingMode)
-					return
-				}
 
+				newReplicas := calculateNewReplicas(rule, replicasOld, false)
 				metricEvaluation.Replicas = newReplicas
 				// reset countin
-				metricEvaluation.ViolationCount = 0
+				metricEvaluation.ViolationCount[0] = 0
 			}
 		} else {
 			// Reset violation count, if latest violation was at upper threshold
 			metricEvaluation.Higher = false
-			metricEvaluation.ViolationCount = 1
+			metricEvaluation.ViolationCount[0] = 1
 		}
 	} else {
 		// if metric is in normal range again, reduce violation count
 		log.Debugf("Metric for rule %s in normal range", rule.Name)
-		if metricEvaluation.ViolationCount >= 0.33 {
-			metricEvaluation.ViolationCount -= 0.33
+		if metricEvaluation.ViolationCount[0] >= 0.33 {
+			metricEvaluation.ViolationCount[0] -= 0.33
 		}
 	}
 }
@@ -190,14 +211,15 @@ func (as Autoscaler) evaluateRules() error {
 
 	newDesiredReplicas := int32(math.Round(weightedReplicas / float64(weights)))
 
-	log.Infof("New desired replica count: %d", newDesiredReplicas)
 	if newDesiredReplicas != deployment.Status.Replicas {
+		log.Infof("New desired replica count: %d", newDesiredReplicas)
 		// New desired Replicas! Should scale..
 		deployment.Spec.Replicas = &newDesiredReplicas
 		_, err := deployments.Update(deployment)
 
 		if err == nil {
 			log.Info("Scaled deployment!")
+			as.calmdown = true
 		}
 		return err
 	}

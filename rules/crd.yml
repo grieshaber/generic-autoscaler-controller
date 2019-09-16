@@ -25,6 +25,10 @@ spec:
           properties:
             metricName:
               type: string
+            priority:
+              type: integer
+              minimum: 1
+              maximum: 5
             modes:
               type: object
               properties:
@@ -32,10 +36,6 @@ spec:
                   type: string
                 downscaling:
                   type: string
-            priority:
-              type: integer
-              minimum: 1
-              maximum: 5
             thresholds:
               type: object
               properties:
@@ -46,3 +46,34 @@ spec:
                 maxViolationCount:
                   type: integer
                   minimum: 1
+            autoMode:
+              type: object
+              properties:
+                deltaMetric:
+                  type: string
+                valueMetric:
+                  type: string
+                thresholdsAdv:
+                  type: object
+                  properties:
+                    upperThresholds:
+                      type: object
+                      properties:
+                        highUp:
+                          type: string
+                        lowUp:
+                          type: string
+                    lowerThresholds:
+                      type: object
+                      properties:
+                        highDown:
+                          type: string
+                        lowDown:
+                          type: string
+                    maxViolationCount:
+                      type: integer
+                      minimum: 1
+          oneOf:
+            - required: ["modes", "metricName", "thresholds"]
+            - required: ["autoMode"]
+      required: ["spec"]
