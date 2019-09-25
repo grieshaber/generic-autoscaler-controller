@@ -82,7 +82,7 @@ func main() {
 	log.Info("Infomer started.")
 
 	log.Debug("Start autoscaler..")
-	scaler := autoscalerv2.New(clientset, 5*time.Second, 2, rules, 1, 10)
+	scaler := autoscalerv2.New(clientset, 5*time.Second, 2, rules, 0, 10)
 	go scaler.Run()
 
 	<-stopChan

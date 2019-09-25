@@ -28,21 +28,22 @@ import (
 )
 
 var (
-	waitGroup *sync.WaitGroup
-	calmdown  bool
+	waitGroup                         *sync.WaitGroup
+	calmdown                          bool
+	previousViolationCountIncreasment float64
 )
 
 type Autoscalerv2 struct {
 	kubeclientset     *kubernetes.Clientset
 	interval          time.Duration
-	calmdownIntervals int32
+	calmdownIntervals int64
 	rules             map[string]*v1.AutoscalingRule
 	metricEvaluations map[*v1.AutoscalingRule]*util.MetricEvaluation
 	minReplicas       int32
 	maxReplicas       int32
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, calmdownIntervals int32, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
 	return &Autoscalerv2{kubeclientset: kubeclientset, interval: interval, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
 		minReplicas: minReplicas, maxReplicas: maxReplicas}
 }
@@ -90,7 +91,7 @@ func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float6
 	}
 }
 
-func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, value resource.Quantity, changeHigh float64, changeMid float64, changeLow float64) {
+func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, value resource.Quantity, delta resource.Quantity, prevIncreasment float64) float64 {
 	metricEvaluation := as.metricEvaluations[rule]
 	var (
 		newCount float64
@@ -98,25 +99,35 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 
 	latestCount := metricEvaluation.ViolationCount[len(metricEvaluation.ViolationCount)-1]
 
-	upperThresholds := rule.Spec.AutoMode.ThresholdsAdv.UpperThresholds
-	lowerThresholds := rule.Spec.AutoMode.ThresholdsAdv.LowerThresholds
+	/*upperThresholds := rule.Spec.AutoMode.ThresholdsAdv.UpperThresholds
+	lowerThresholds := rule.Spec.AutoMode.ThresholdsAdv.LowerThresholds*/
+	var (
+		limit                  int64
+		factor                 float64
+		violationCountIncrease float64
+	)
 
-	switch {
-	case value.Cmp(upperThresholds.HighUp)+1 >= 1:
-		newCount = latestCount + changeHigh
-		log.Debugf("HighUp reached. New Count: %v", newCount)
-	case value.Cmp(upperThresholds.LowUp)+1 >= 1:
-		newCount = latestCount + (changeHigh * 0.5)
-		log.Debugf("LowUp reached. New Count: %v", newCount)
-	case value.Cmp(lowerThresholds.LowDown)-1 <= -1:
-		newCount = latestCount + changeLow
-		log.Debugf("HighDown reached. New Count: %v", newCount)
-	case value.Cmp(lowerThresholds.HighDown)-1 <= -1:
-		newCount = latestCount + (changeLow * 0.5)
-		log.Debugf("LowDown reached. New Count: %v", newCount)
-	default:
-		newCount = latestCount + changeMid
-		log.Debugf("No Threshold reached. New Count: %v", newCount)
+	// TODO: Delta = 0?
+	if delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == 0 {
+		violationCountIncrease = prevIncreasment * 0.5
+		newCount = latestCount + violationCountIncrease
+	} else {
+		if delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == 1 {
+			// Steigend
+			limit = 900
+			factor = 1
+		} else if delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == -1 {
+			// Fallend
+			limit = 500
+			factor = -1
+		}
+
+		diffToLimit := util.Abs(value.MilliValue() - limit)
+		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta.MilliValue())-as.calmdownIntervals, 1)
+		remainingViolationCount := rule.Spec.AutoMode.ThresholdsAdv.MaxViolationCount - math.Abs(latestCount)
+		violationCountIncrease = remainingViolationCount / float64(intervalsUntilLimit)
+		newCount = latestCount + factor*violationCountIncrease
+		log.Debugf("diff: %v, intsUntil: %v, remainingCount: %v, violationCountIn: %v, newCount: %v", diffToLimit, intervalsUntilLimit, remainingViolationCount, violationCountIncrease, newCount)
 	}
 
 	if len(metricEvaluation.ViolationCount) == 5 {
@@ -124,6 +135,8 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 	} else {
 		metricEvaluation.ViolationCount = append(metricEvaluation.ViolationCount, newCount)
 	}
+
+	return violationCountIncrease
 }
 
 func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
@@ -155,31 +168,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	}
 	log.Debugf("Current Delta: %v", delta)
 
-	switch {
-	// Wachstums-Regeln
-	case delta.Cmp(*resource.NewMilliQuantity(100, resource.DecimalSI))+1 >= 1:
-		// Sehr starkes Wachstum: Hoher Wert -> bald hoch skalieren
-		as.calculateNewViolationCount(rule, value, 3, 1, 0)
-	case delta.Cmp(*resource.NewMilliQuantity(50, resource.DecimalSI))+1 >= 1:
-		// starkes wachstum
-		as.calculateNewViolationCount(rule, value, 2, 0.5, -0.25)
-	case delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == 1:
-		// wachstum
-		as.calculateNewViolationCount(rule, value, 0.5, 0, -1)
-	// Abbau-Regeln
-	case delta.Cmp(*resource.NewMilliQuantity(-100, resource.DecimalSI))-1 <= -1:
-		// sehr starker abbau
-		as.calculateNewViolationCount(rule, value, 0, -1, -3)
-	case delta.Cmp(*resource.NewMilliQuantity(-50, resource.DecimalSI))-1 <= -1:
-		// starker abbau
-		as.calculateNewViolationCount(rule, value, 0, -1, -2)
-	case delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == -1:
-		// abbau
-		as.calculateNewViolationCount(rule, value, 0, -0.5, -1)
-	default:
-		// Keine Veränderung -> Bei niedrigen Werten runterskalieren
-		as.calculateNewViolationCount(rule, value, 0, -0.5, -2)
-	}
+	previousViolationCountIncreasment = as.calculateNewViolationCount(rule, value, delta, previousViolationCountIncreasment)
 
 	metricEvaluation := as.metricEvaluations[rule]
 	lastViolationCount := metricEvaluation.ViolationCount[len(metricEvaluation.ViolationCount)-1]
@@ -192,6 +181,8 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	if math.Abs(lastViolationCount) >= rule.Spec.AutoMode.ThresholdsAdv.MaxViolationCount {
 		log.Debug("Bingo, need to scale!")
 		metricEvaluation.Replicas = as.calculateNewReplicas(replicasOld, countSlope)
+
+		metricEvaluation.ViolationCount = make([]float64, 1, 5)
 	}
 }
 
@@ -249,10 +240,6 @@ func (as Autoscalerv2) evaluateRules() error {
 		_, err := deployments.Update(deployment)
 
 		if err == nil {
-			for _, metricEvaluation := range as.metricEvaluations {
-				metricEvaluation.ViolationCount = make([]float64, 1, 5)
-			}
-
 			log.Info("Scaled deployment!")
 			calmdown = true
 		}

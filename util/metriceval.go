@@ -12,12 +12,16 @@
 
 package util
 
+import "k8s.io/apimachinery/pkg/api/resource"
+
 type MetricEvaluation struct {
+	ValueHistory   []*resource.Quantity
 	ViolationCount []float64
 	Replicas       float64
 	Higher         bool
 }
 
 func NewMetricEvaluation(replicas float64) *MetricEvaluation {
-	return &MetricEvaluation{make([]float64, 1, 5), replicas, false}
+	return &MetricEvaluation{[]*resource.Quantity{resource.NewMilliQuantity(0, resource.DecimalSI), resource.NewMilliQuantity(0, resource.DecimalSI)},
+		make([]float64, 1, 5), replicas, false}
 }

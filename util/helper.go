@@ -19,10 +19,23 @@ func Min(a, b int32) int32 {
 	return b
 }
 
-func Max(a, b int32) int32 {
+func Max32(a, b int32) int32 {
 	if a > b {
 		return a
 	}
 	return b
 }
 
+func Max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Abs(a int64) int64 {
+	if a < 0 {
+		return a * -1
+	}
+	return a
+}
