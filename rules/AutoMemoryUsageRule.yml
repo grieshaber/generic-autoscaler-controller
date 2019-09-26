@@ -8,11 +8,8 @@ spec:
   autoMode:
     deltaMetric: de_hhu_bsinfo_Storage_MemoryUsage_Delta
     valueMetric: de_hhu_bsinfo_Storage_MemoryUsage
-    thresholdsAdv:
-      upperThresholds:
-        highUp: 800m
-        lowUp: 750m
-      lowerThresholds:
-        highDown: 250m
-        lowDown: 200m
+    limits:
+      upperLimit: 900m
+      lowerLimit: 300m
+      desiredUsage: 700m
       maxViolationCount: 5

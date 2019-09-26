@@ -53,23 +53,15 @@ spec:
                   type: string
                 valueMetric:
                   type: string
-                thresholdsAdv:
+                limits:
                   type: object
                   properties:
-                    upperThresholds:
-                      type: object
-                      properties:
-                        highUp:
-                          type: string
-                        lowUp:
-                          type: string
-                    lowerThresholds:
-                      type: object
-                      properties:
-                        highDown:
-                          type: string
-                        lowDown:
-                          type: string
+                    upperLimit:
+                      type: string
+                    lowerLimit:
+                      type: string
+                    desiredUsage:
+                      type: string
                     maxViolationCount:
                       type: integer
                       minimum: 1

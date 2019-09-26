@@ -72,7 +72,7 @@ func (as Autoscalerv2) Run() {
 	}()
 }
 
-func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float64) float64 {
+func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float64, limit int64, desired int64) float64 {
 	switch {
 	case countSlope > 2:
 		return policies.Strong.UpScalingFunction(replicasOld)
@@ -80,18 +80,14 @@ func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float6
 		return policies.Medium.UpScalingFunction(replicasOld)
 	case countSlope > 0:
 		return policies.Mild.UpScalingFunction(replicasOld)
-	case countSlope < -2:
-		return policies.Strong.DownScalingFunction(replicasOld)
-	case countSlope < -1:
-		return policies.Medium.DownScalingFunction(replicasOld)
 	case countSlope < 0:
-		return policies.Mild.DownScalingFunction(replicasOld)
+		return policies.DownScalingFunction(replicasOld, limit, desired)
 	default:
 		return float64(replicasOld)
 	}
 }
 
-func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, value resource.Quantity, delta resource.Quantity, prevIncreasment float64) float64 {
+func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, value resource.Quantity, delta int64, prevIncreasment float64) float64 {
 	metricEvaluation := as.metricEvaluations[rule]
 	var (
 		newCount float64
@@ -99,32 +95,37 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 
 	latestCount := metricEvaluation.ViolationCount[len(metricEvaluation.ViolationCount)-1]
 
-	/*upperThresholds := rule.Spec.AutoMode.ThresholdsAdv.UpperThresholds
-	lowerThresholds := rule.Spec.AutoMode.ThresholdsAdv.LowerThresholds*/
+	/*upperLimit := rule.Spec.AutoMode.ThresholdsAdv.UpperThresholds
+	lowerLimit := rule.Spec.AutoMode.ThresholdsAdv.LowerThresholds*/
+
 	var (
 		limit                  int64
 		factor                 float64
 		violationCountIncrease float64
 	)
 
-	// TODO: Delta = 0?
-	if delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == 0 {
+	valueAsInt := value.MilliValue()
+	if delta == 0 {
 		violationCountIncrease = prevIncreasment * 0.5
-		newCount = latestCount + violationCountIncrease
+		return latestCount + violationCountIncrease
 	} else {
-		if delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == 1 {
+		if delta > 0 {
 			// Steigend
-			limit = 900
+			limit = rule.Spec.AutoMode.Limits.UpperLimit.MilliValue()
 			factor = 1
-		} else if delta.Cmp(*resource.NewMilliQuantity(0, resource.DecimalSI)) == -1 {
+		} else if delta < 0 {
 			// Fallend
-			limit = 500
+			if valueAsInt < rule.Spec.AutoMode.Limits.LowerLimit.MilliValue() {
+				limit = valueAsInt + 2*delta
+			} else {
+				limit = rule.Spec.AutoMode.Limits.LowerLimit.MilliValue()
+			}
 			factor = -1
 		}
 
-		diffToLimit := util.Abs(value.MilliValue() - limit)
-		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta.MilliValue())-as.calmdownIntervals, 1)
-		remainingViolationCount := rule.Spec.AutoMode.ThresholdsAdv.MaxViolationCount - math.Abs(latestCount)
+		diffToLimit := util.Abs(valueAsInt - limit)
+		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta)-as.calmdownIntervals, 1)
+		remainingViolationCount := math.Abs(factor*rule.Spec.AutoMode.Limits.MaxViolationCount - latestCount)
 		violationCountIncrease = remainingViolationCount / float64(intervalsUntilLimit)
 		newCount = latestCount + factor*violationCountIncrease
 		log.Debugf("diff: %v, intsUntil: %v, remainingCount: %v, violationCountIn: %v, newCount: %v", diffToLimit, intervalsUntilLimit, remainingViolationCount, violationCountIncrease, newCount)
@@ -149,7 +150,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	}
 
 	valueMetric, deltaMetric, err := metrics.GetMetrics(as.kubeclientset, rule.Spec.AutoMode)
-	if err != nil || len(valueMetric.Items) == 0 || len(deltaMetric.Items) == 0 {
+	if err != nil || len(valueMetric.Items) == 0 {
 		log.Errorf("Could not retrieve metrics for rule %s", rule.Name, err)
 		return
 	}
@@ -168,19 +169,23 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	}
 	log.Debugf("Current Delta: %v", delta)
 
-	previousViolationCountIncreasment = as.calculateNewViolationCount(rule, value, delta, previousViolationCountIncreasment)
-
 	metricEvaluation := as.metricEvaluations[rule]
+
+	weightedDelta := int64(0.9*float64(delta.MilliValue()) + 0.1*float64(metricEvaluation.LastDelta))
+	metricEvaluation.LastDelta = weightedDelta
+	log.Debugf("Current weighted Delta: %v", weightedDelta)
+
+	previousViolationCountIncreasment = as.calculateNewViolationCount(rule, value, weightedDelta, previousViolationCountIncreasment)
+
 	lastViolationCount := metricEvaluation.ViolationCount[len(metricEvaluation.ViolationCount)-1]
 	deltaViolationCount := lastViolationCount - metricEvaluation.ViolationCount[0]
-
 	countSlope := deltaViolationCount / float64(len(metricEvaluation.ViolationCount))
 
 	log.Infof("Count slope is %v", countSlope)
 
-	if math.Abs(lastViolationCount) >= rule.Spec.AutoMode.ThresholdsAdv.MaxViolationCount {
+	if math.Abs(lastViolationCount) >= rule.Spec.AutoMode.Limits.MaxViolationCount {
 		log.Debug("Bingo, need to scale!")
-		metricEvaluation.Replicas = as.calculateNewReplicas(replicasOld, countSlope)
+		metricEvaluation.Replicas = as.calculateNewReplicas(replicasOld, countSlope, value.MilliValue(), rule.Spec.AutoMode.Limits.DesiredUsage.MilliValue())
 
 		metricEvaluation.ViolationCount = make([]float64, 1, 5)
 	}
