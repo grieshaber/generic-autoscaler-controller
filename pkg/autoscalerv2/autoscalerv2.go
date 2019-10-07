@@ -192,6 +192,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 }
 
 func (as Autoscalerv2) evaluateRules() error {
+	// TODO: Add deployment name and namespace as parameter!
 	deployments := as.kubeclientset.AppsV1().Deployments("workload-sim")
 	deployment, err := deployments.Get("workload-sim-dummy", metav1.GetOptions{})
 

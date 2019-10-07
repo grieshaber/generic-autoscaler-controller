@@ -48,7 +48,7 @@ func mediumUpscalingFunction(replicasOld int32) float64 {
 }
 
 func mediumDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.75)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.7)
 }
 
 // STRONG

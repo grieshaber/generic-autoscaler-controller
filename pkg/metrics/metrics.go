@@ -52,6 +52,7 @@ func GetMetrics(clientset *kubernetes.Clientset, autoMode v1.AutoMode) (Metric, 
 	var valueMetric Metric
 	var deltaMetric Metric
 
+	// TODO Make Namespace of Target part of Rule CRD
 	valueData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", autoMode.ValueMetric).DoRaw()
 	if err != nil {
 		return valueMetric, deltaMetric, err
