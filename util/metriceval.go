@@ -13,11 +13,12 @@
 package util
 
 type MetricEvaluation struct {
+	LastDelta      int64
 	ViolationCount []float64
 	Replicas       float64
 	Higher         bool
 }
 
 func NewMetricEvaluation(replicas float64) *MetricEvaluation {
-	return &MetricEvaluation{make([]float64, 1, 5), replicas, false}
+	return &MetricEvaluation{0, make([]float64, 1, 5), replicas, false}
 }

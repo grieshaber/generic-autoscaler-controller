@@ -47,25 +47,16 @@ type Thresholds struct {
 }
 
 type AutoMode struct {
-	DeltaMetric   string        `json:"deltaMetric"`
-	ValueMetric   string        `json:"valueMetric"`
-	ThresholdsAdv ThresholdsAdv `json:"thresholdsAdv"`
+	DeltaMetric string `json:"deltaMetric"`
+	ValueMetric string `json:"valueMetric"`
+	Limits      Limits `json:"limits"`
 }
 
-type ThresholdsAdv struct {
-	UpperThresholds   UpperThresholds `json:"upperThresholds"`
-	LowerThresholds   LowerThresholds `json:"lowerThresholds"`
-	MaxViolationCount float64         `json:"maxViolationCount"`
-}
-
-type UpperThresholds struct {
-	HighUp resource.Quantity `json:"highUp"`
-	LowUp  resource.Quantity `json:"lowUp"`
-}
-
-type LowerThresholds struct {
-	HighDown resource.Quantity `json:"highDown"`
-	LowDown  resource.Quantity `json:"lowDown"`
+type Limits struct {
+	UpperLimit        resource.Quantity `json:"upperLimit"`
+	LowerLimit        resource.Quantity `json:"lowerLimit"`
+	DesiredUsage      resource.Quantity `json:"desiredUsage"`
+	MaxViolationCount float64           `json:"maxViolationCount"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

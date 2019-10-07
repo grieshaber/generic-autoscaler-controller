@@ -28,30 +28,35 @@ var (
 	Strong = AutoscalingPolicy{"strong", strongUpscalingFunction, strongDownscalingFunction}
 )
 
+// DOWNSCALING FUNCTION
+func DownScalingFunction(replicas int32, limit int64, desired int64) float64 {
+	return float64(replicas) * (float64(limit) / float64(desired))
+}
+
 // MILD
 func mildUpscalingFunction(replicasOld int32) float64 {
 	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.15)
 }
 
 func mildDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.85)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.85)
 }
 
 // MEDIUM
 func mediumUpscalingFunction(replicasOld int32) float64 {
-	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.3)
+	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.3)
 }
 
 func mediumDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.75)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.7)
 }
 
 // STRONG
 func strongUpscalingFunction(replicasOld int32) float64 {
-	return math.Max(float64(replicasOld+1), float64(replicasOld) * 1.5)
+	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.5)
 }
 
 func strongDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(1, float64(replicasOld-1)), float64(replicasOld) * 0.5)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.5)
 }
 
