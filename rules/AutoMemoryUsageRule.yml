@@ -5,11 +5,12 @@ metadata:
   namespace: autoscaling
 spec:
   priority: 1
+  targetNamespace: workload-sim
   autoMode:
     deltaMetric: de_hhu_bsinfo_Storage_MemoryUsage_Delta
     valueMetric: de_hhu_bsinfo_Storage_MemoryUsage
     limits:
       upperLimit: 900m
-      lowerLimit: 300m
-      desiredUsage: 700m
+      lowerLimit: 400m
+      desiredUsage: 600m
       maxViolationCount: 5

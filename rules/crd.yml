@@ -23,6 +23,8 @@ spec:
         spec:
           type: object
           properties:
+            targetNamespace:
+              type: string
             metricName:
               type: string
             priority:

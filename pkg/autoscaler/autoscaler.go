@@ -113,7 +113,7 @@ func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
 	}
 
 	metricEvaluation := as.metricEvaluations[rule]
-	metric, err := metrics.GetMetric(as.kubeclientset, rule.Spec.MetricName)
+	metric, err := metrics.GetMetric(as.kubeclientset, rule.Spec.TargetNamespace, rule.Spec.MetricName)
 
 	if err != nil {
 		log.Errorf("Could not retrieve metrics for rule %s", rule.Name, err)
@@ -213,6 +213,11 @@ func (as Autoscaler) evaluateRules() error {
 
 	if newDesiredReplicas != deployment.Status.Replicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
+		if newDesiredReplicas > as.maxReplicas {
+			newDesiredReplicas = as.maxReplicas
+		} else if newDesiredReplicas < as.minReplicas {
+			newDesiredReplicas = as.minReplicas
+		}
 		// New desired Replicas! Should scale..
 		deployment.Spec.Replicas = &newDesiredReplicas
 		_, err := deployments.Update(deployment)

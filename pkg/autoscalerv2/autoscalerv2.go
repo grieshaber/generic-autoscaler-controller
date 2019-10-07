@@ -34,17 +34,19 @@ var (
 )
 
 type Autoscalerv2 struct {
-	kubeclientset     *kubernetes.Clientset
-	interval          time.Duration
-	calmdownIntervals int64
-	rules             map[string]*v1.AutoscalingRule
-	metricEvaluations map[*v1.AutoscalingRule]*util.MetricEvaluation
-	minReplicas       int32
-	maxReplicas       int32
+	kubeclientset       *kubernetes.Clientset
+	interval            time.Duration
+	deploymentNamespace string
+	deploymentName 	string
+	calmdownIntervals   int64
+	rules               map[string]*v1.AutoscalingRule
+	metricEvaluations   map[*v1.AutoscalingRule]*util.MetricEvaluation
+	minReplicas         int32
+	maxReplicas         int32
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
-	return &Autoscalerv2{kubeclientset: kubeclientset, interval: interval, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, deploymentNamespace string,deploymentName string, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
+	return &Autoscalerv2{kubeclientset: kubeclientset, interval: interval, deploymentNamespace: deploymentNamespace, deploymentName: deploymentName, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
 		minReplicas: minReplicas, maxReplicas: maxReplicas}
 }
 
@@ -74,9 +76,9 @@ func (as Autoscalerv2) Run() {
 
 func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float64, limit int64, desired int64) float64 {
 	switch {
-	case countSlope > 2:
-		return policies.Strong.UpScalingFunction(replicasOld)
 	case countSlope > 1:
+		return policies.Strong.UpScalingFunction(replicasOld)
+	case countSlope > 0.5:
 		return policies.Medium.UpScalingFunction(replicasOld)
 	case countSlope > 0:
 		return policies.Mild.UpScalingFunction(replicasOld)
@@ -94,9 +96,6 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 	)
 
 	latestCount := metricEvaluation.ViolationCount[len(metricEvaluation.ViolationCount)-1]
-
-	/*upperLimit := rule.Spec.AutoMode.ThresholdsAdv.UpperThresholds
-	lowerLimit := rule.Spec.AutoMode.ThresholdsAdv.LowerThresholds*/
 
 	var (
 		limit                  int64
@@ -149,7 +148,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 		as.metricEvaluations[rule] = util.NewMetricEvaluation(float64(replicasOld))
 	}
 
-	valueMetric, deltaMetric, err := metrics.GetMetrics(as.kubeclientset, rule.Spec.AutoMode)
+	valueMetric, deltaMetric, err := metrics.GetMetrics(as.kubeclientset, rule.Spec.TargetNamespace, rule.Spec.AutoMode)
 	if err != nil || len(valueMetric.Items) == 0 {
 		log.Errorf("Could not retrieve metrics for rule %s", rule.Name, err)
 		return
@@ -192,9 +191,8 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 }
 
 func (as Autoscalerv2) evaluateRules() error {
-	// TODO: Add deployment name and namespace as parameter!
-	deployments := as.kubeclientset.AppsV1().Deployments("workload-sim")
-	deployment, err := deployments.Get("workload-sim-dummy", metav1.GetOptions{})
+	deployments := as.kubeclientset.AppsV1().Deployments(as.deploymentNamespace)
+	deployment, err := deployments.Get(as.deploymentName, metav1.GetOptions{})
 
 	if err != nil {
 		return err
@@ -235,11 +233,9 @@ func (as Autoscalerv2) evaluateRules() error {
 	if newDesiredReplicas != deployment.Status.Replicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
 		if newDesiredReplicas > as.maxReplicas {
-			log.Warnf("Deployment at maximum replica count. Will not scale to %v replicas.", newDesiredReplicas)
-			return nil
+			newDesiredReplicas = as.maxReplicas
 		} else if newDesiredReplicas < as.minReplicas {
-			log.Warnf("Deployment at minimum replica count. Will not scale to %v replicas.", newDesiredReplicas)
-			return nil
+			newDesiredReplicas = as.minReplicas
 		}
 		// New desired Replicas! Should scale..
 		deployment.Spec.Replicas = &newDesiredReplicas

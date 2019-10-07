@@ -35,28 +35,28 @@ func DownScalingFunction(replicas int32, limit int64, desired int64) float64 {
 
 // MILD
 func mildUpscalingFunction(replicasOld int32) float64 {
-	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.15)
+	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.25)
 }
 
 func mildDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.85)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.8)
 }
 
 // MEDIUM
 func mediumUpscalingFunction(replicasOld int32) float64 {
-	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.3)
+	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.5)
 }
 
 func mediumDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.7)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.6)
 }
 
 // STRONG
 func strongUpscalingFunction(replicasOld int32) float64 {
-	return math.Max(float64(replicasOld+1), float64(replicasOld)*1.5)
+	return math.Max(float64(replicasOld+1), float64(replicasOld)*2)
 }
 
 func strongDownscalingFunction(replicasOld int32) float64 {
-	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.5)
+	return math.Min(math.Max(0, float64(replicasOld-1)), float64(replicasOld) * 0.4)
 }
 

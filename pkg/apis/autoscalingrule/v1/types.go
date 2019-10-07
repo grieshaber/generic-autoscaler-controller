@@ -28,11 +28,12 @@ type AutoscalingRule struct {
 }
 
 type AutoscalingRuleSpec struct {
-	MetricName string     `json:"metricName"`
-	Modes      Modes      `json:"modes"`
-	Priority   int32      `json:"priority"`
-	Thresholds Thresholds `json:"thresholds"`
-	AutoMode   AutoMode   `json:"autoMode"`
+	MetricName      string     `json:"metricName"`
+	TargetNamespace string     `json:"targetNamespace"`
+	Modes           Modes      `json:"modes"`
+	Priority        int32      `json:"priority"`
+	Thresholds      Thresholds `json:"thresholds"`
+	AutoMode        AutoMode   `json:"autoMode"`
 }
 
 type Modes struct {

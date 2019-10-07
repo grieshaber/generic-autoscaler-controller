@@ -37,9 +37,9 @@ type Metric struct {
 	} `json:"items"`
 }
 
-func GetMetric(clientset *kubernetes.Clientset, metricName string) (Metric, error) {
+func GetMetric(clientset *kubernetes.Clientset, namespace string, metricName string) (Metric, error) {
 	var metric Metric
-	data, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", metricName).DoRaw()
+	data, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces", namespace, "services/*", metricName).DoRaw()
 	if err != nil {
 		return metric, err
 	}
@@ -48,12 +48,11 @@ func GetMetric(clientset *kubernetes.Clientset, metricName string) (Metric, erro
 	return metric, err
 }
 
-func GetMetrics(clientset *kubernetes.Clientset, autoMode v1.AutoMode) (Metric, Metric, error) {
+func GetMetrics(clientset *kubernetes.Clientset, namespace string, autoMode v1.AutoMode) (Metric, Metric, error) {
 	var valueMetric Metric
 	var deltaMetric Metric
 
-	// TODO Make Namespace of Target part of Rule CRD
-	valueData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", autoMode.ValueMetric).DoRaw()
+	valueData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces", namespace, "services/*", autoMode.ValueMetric).DoRaw()
 	if err != nil {
 		return valueMetric, deltaMetric, err
 	}
@@ -64,7 +63,7 @@ func GetMetrics(clientset *kubernetes.Clientset, autoMode v1.AutoMode) (Metric, 
 		return valueMetric, deltaMetric, err
 	}
 
-	deltaData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces/workload-sim/services/*", autoMode.DeltaMetric).DoRaw()
+	deltaData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces", namespace, "services/*", autoMode.DeltaMetric).DoRaw()
 	if err != nil {
 		return valueMetric, deltaMetric, err
 	}
