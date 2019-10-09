@@ -211,13 +211,15 @@ func (as Autoscaler) evaluateRules() error {
 
 	newDesiredReplicas := int32(math.Round(weightedReplicas / float64(weights)))
 
+	if newDesiredReplicas > as.maxReplicas {
+		newDesiredReplicas = as.maxReplicas
+	} else if newDesiredReplicas < as.minReplicas {
+		newDesiredReplicas = as.minReplicas
+	}
+
 	if newDesiredReplicas != deployment.Status.Replicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
-		if newDesiredReplicas > as.maxReplicas {
-			newDesiredReplicas = as.maxReplicas
-		} else if newDesiredReplicas < as.minReplicas {
-			newDesiredReplicas = as.minReplicas
-		}
+
 		// New desired Replicas! Should scale..
 		deployment.Spec.Replicas = &newDesiredReplicas
 		_, err := deployments.Update(deployment)

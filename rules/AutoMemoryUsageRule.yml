@@ -12,5 +12,5 @@ spec:
     limits:
       upperLimit: 900m
       lowerLimit: 400m
-      desiredUsage: 600m
-      maxViolationCount: 5
+      desiredUsage: 700m
+      maxViolationCount: 5k

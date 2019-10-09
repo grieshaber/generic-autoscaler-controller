@@ -7,10 +7,10 @@ spec:
   targetNamespace: workload-sim
   metricName: de_hhu_bsinfo_Storage_MemoryUsage
   modes:
-    upscaling: mild
+    upscaling: strong
     downscaling: medium
   priority: 5
   thresholds:
     upperThreshold: 800m
-    lowerThreshold: 200m
+    lowerThreshold: 400m
     maxViolationCount: 3

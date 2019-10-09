@@ -37,7 +37,7 @@ type Autoscalerv2 struct {
 	kubeclientset       *kubernetes.Clientset
 	interval            time.Duration
 	deploymentNamespace string
-	deploymentName 	string
+	deploymentName      string
 	calmdownIntervals   int64
 	rules               map[string]*v1.AutoscalingRule
 	metricEvaluations   map[*v1.AutoscalingRule]*util.MetricEvaluation
@@ -45,7 +45,7 @@ type Autoscalerv2 struct {
 	maxReplicas         int32
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, deploymentNamespace string,deploymentName string, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, deploymentNamespace string, deploymentName string, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
 	return &Autoscalerv2{kubeclientset: kubeclientset, interval: interval, deploymentNamespace: deploymentNamespace, deploymentName: deploymentName, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
 		minReplicas: minReplicas, maxReplicas: maxReplicas}
 }
@@ -77,11 +77,11 @@ func (as Autoscalerv2) Run() {
 func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float64, limit int64, desired int64) float64 {
 	switch {
 	case countSlope > 1:
-		return policies.Strong.UpScalingFunction(replicasOld)
+		return math.Min(float64(as.maxReplicas), policies.Strong.UpScalingFunction(replicasOld))
 	case countSlope > 0.5:
-		return policies.Medium.UpScalingFunction(replicasOld)
+		return math.Min(float64(as.maxReplicas), policies.Strong.UpScalingFunction(replicasOld))
 	case countSlope > 0:
-		return policies.Mild.UpScalingFunction(replicasOld)
+		return math.Min(float64(as.maxReplicas), policies.Strong.UpScalingFunction(replicasOld))
 	case countSlope < 0:
 		return policies.DownScalingFunction(replicasOld, limit, desired)
 	default:
@@ -106,7 +106,7 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 	valueAsInt := value.MilliValue()
 	if delta == 0 {
 		violationCountIncrease = prevIncreasment * 0.5
-		return latestCount + violationCountIncrease
+		newCount = latestCount + violationCountIncrease
 	} else {
 		if delta > 0 {
 			// Steigend
@@ -123,10 +123,10 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 		}
 
 		diffToLimit := util.Abs(valueAsInt - limit)
-		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta)-as.calmdownIntervals, 1)
+		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta) - as.calmdownIntervals, 1)
 		remainingViolationCount := math.Abs(factor*rule.Spec.AutoMode.Limits.MaxViolationCount - latestCount)
-		violationCountIncrease = remainingViolationCount / float64(intervalsUntilLimit)
-		newCount = latestCount + factor*violationCountIncrease
+		violationCountIncrease = factor * (remainingViolationCount / float64(intervalsUntilLimit))
+		newCount = latestCount + violationCountIncrease
 		log.Debugf("diff: %v, intsUntil: %v, remainingCount: %v, violationCountIn: %v, newCount: %v", diffToLimit, intervalsUntilLimit, remainingViolationCount, violationCountIncrease, newCount)
 	}
 
@@ -170,7 +170,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 
 	metricEvaluation := as.metricEvaluations[rule]
 
-	weightedDelta := int64(0.9*float64(delta.MilliValue()) + 0.1*float64(metricEvaluation.LastDelta))
+	weightedDelta := int64(math.Round(0.9*float64(delta.MilliValue()) + 0.1*float64(metricEvaluation.LastDelta)))
 	metricEvaluation.LastDelta = weightedDelta
 	log.Debugf("Current weighted Delta: %v", weightedDelta)
 
@@ -232,11 +232,7 @@ func (as Autoscalerv2) evaluateRules() error {
 
 	if newDesiredReplicas != deployment.Status.Replicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
-		if newDesiredReplicas > as.maxReplicas {
-			newDesiredReplicas = as.maxReplicas
-		} else if newDesiredReplicas < as.minReplicas {
-			newDesiredReplicas = as.minReplicas
-		}
+
 		// New desired Replicas! Should scale..
 		deployment.Spec.Replicas = &newDesiredReplicas
 		_, err := deployments.Update(deployment)

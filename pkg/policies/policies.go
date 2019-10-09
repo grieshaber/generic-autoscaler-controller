@@ -30,7 +30,8 @@ var (
 
 // DOWNSCALING FUNCTION
 func DownScalingFunction(replicas int32, limit int64, desired int64) float64 {
-	return float64(replicas) * (float64(limit) / float64(desired))
+	// +1 is only bc workload simulation structure (1 instance is always active, but not counted)
+	return float64(replicas + 1) * (float64(limit) / float64(desired))
 }
 
 // MILD
