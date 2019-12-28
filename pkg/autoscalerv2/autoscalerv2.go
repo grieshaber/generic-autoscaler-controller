@@ -219,7 +219,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	}
 }
 
-func (as Autoscalerv2) evaluteRules(replicas int32) int32 {
+func (as Autoscalerv2) evaluateRules(replicas int32) int32 {
 	log.Debug("Tick. Evaluate all metrics..")
 	// asynchronously evaluate metrics
 	for _, rule := range as.rules {
@@ -261,7 +261,7 @@ func (as Autoscalerv2) evaluateRulesForDeployments() error {
 		return fmt.Errorf("number of replicas instable, won't scale now")
 	}
 
-	newDesiredReplicas := as.evaluteRules(deployment.Status.Replicas)
+	newDesiredReplicas := as.evaluateRules(deployment.Status.Replicas)
 
 	if newDesiredReplicas != deployment.Status.ReadyReplicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
@@ -293,7 +293,7 @@ func (as Autoscalerv2) evaluateRulesForStatefulSets() error {
 		return fmt.Errorf("number of replicas instable, won't scale now")
 	}
 
-	newDesiredReplicas := as.evaluteRules(statefulset.Status.Replicas)
+	newDesiredReplicas := as.evaluateRules(statefulset.Status.Replicas)
 
 	if newDesiredReplicas != statefulset.Status.ReadyReplicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
