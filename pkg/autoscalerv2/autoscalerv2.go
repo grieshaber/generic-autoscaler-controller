@@ -186,7 +186,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	metricEvaluation := as.metricEvaluations[rule]
 	metricEvaluation.NumIterations = metricEvaluation.NumIterations + 1
 
-	if delta.MilliValue() > 10*metricEvaluation.AvgDelta {
+	if util.Abs(delta.MilliValue()) > 10*metricEvaluation.AvgDelta {
 		log.Debugf("Delta seems to be anomal %d -> %d", delta, metricEvaluation.AvgDelta)
 		if anomalyDelta {
 			anomalyDelta = false
@@ -197,7 +197,7 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 		anomalyDelta = false
 	}
 
-	metricEvaluation.AvgDelta = metricEvaluation.AvgDelta + delta.MilliValue()/metricEvaluation.NumIterations
+	metricEvaluation.AvgDelta = metricEvaluation.AvgDelta + util.Abs(delta.MilliValue())/metricEvaluation.NumIterations
 
 	weightedDelta := int64(math.Round(0.9*float64(delta.MilliValue()) + 0.1*float64(metricEvaluation.LastDelta)))
 	metricEvaluation.LastDelta = weightedDelta
