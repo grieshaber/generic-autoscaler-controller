@@ -1,0 +1,16 @@
+apiVersion: bsinfo.hhu.de/v1
+kind: AutoscalingRule
+metadata:
+  name: aerospike-auto-usage-memory-rule
+  namespace: autoscaling
+spec:
+  priority: 1
+  targetNamespace: aerospike
+  autoMode:
+    deltaMetric: aerospike_ns_memory_usage_delta
+    valueMetric: aerospike_ns_memory_usage
+    limits:
+      upperLimit: 850m
+      lowerLimit: 400m
+      desiredUsage: 650m
+      maxViolationCount: 5

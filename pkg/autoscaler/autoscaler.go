@@ -27,22 +27,25 @@ import (
 	"time"
 )
 
-var waitGroup *sync.WaitGroup
+var (
+	calmdown  bool
+	waitGroup *sync.WaitGroup
+)
 
 type Autoscaler struct {
 	kubeclientset     *kubernetes.Clientset
 	interval          time.Duration
-	calmdown          bool
-	calmdownIntervals int32
+	target            util.Target
+	calmdownIntervals int64
 	rules             map[string]*v1.AutoscalingRule
 	metricEvaluations map[*v1.AutoscalingRule]*util.MetricEvaluation
 	minReplicas       int32
 	maxReplicas       int32
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, calmdownIntervals int32, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscaler {
-	return &Autoscaler{kubeclientset: kubeclientset, interval: interval, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
-		minReplicas: minReplicas, maxReplicas: maxReplicas}
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, target util.Target, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int, maxReplicas int) *Autoscaler {
+	return &Autoscaler{kubeclientset: kubeclientset, interval: interval, target: target, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
+		minReplicas: int32(minReplicas), maxReplicas: int32(maxReplicas)}
 }
 
 func (as Autoscaler) Run() {
@@ -53,15 +56,22 @@ func (as Autoscaler) Run() {
 	go func() {
 		for range ticker.C {
 			remainingCalmdownIntervals := as.calmdownIntervals
-			if as.calmdown {
+			if calmdown {
 				log.Debugf("Calming down after scaling (remaining calmdown intervals %d/%d)", remainingCalmdownIntervals, as.calmdownIntervals)
 				remainingCalmdownIntervals--
 				if remainingCalmdownIntervals == 0 {
-					as.calmdown = false
+					calmdown = false
 				}
 			} else {
-				if err := as.evaluateRules(); err != nil {
-					log.Error("Error while evaluating rules", err)
+				switch as.target.Kind {
+				case "Deployment":
+					if err := as.evaluateRulesForDeployments(); err != nil {
+						log.Error("Error while evaluating rules", err)
+					}
+				case "StatefulSet":
+					if err := as.evaluateRulesForStatefulSets(); err != nil {
+						log.Error("Error while evaluating rules", err)
+					}
 				}
 			}
 		}
@@ -109,7 +119,7 @@ func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
 
 	if _, initialized := as.metricEvaluations[rule]; !initialized {
 		log.Debugf("Initializing new MetricEvaluation Object for rule %s", rule.Name)
-		as.metricEvaluations[rule] = util.NewMetricEvaluation(float64(replicasOld))
+		as.metricEvaluations[rule] = util.NewMetricEvaluation(float64(replicasOld), 0)
 	}
 
 	metricEvaluation := as.metricEvaluations[rule]
@@ -171,24 +181,12 @@ func (as Autoscaler) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32) {
 	}
 }
 
-func (as Autoscaler) evaluateRules() error {
-	deployments := as.kubeclientset.AppsV1().Deployments("workload-sim")
-	deployment, err := deployments.Get("workload-sim-dummy", metav1.GetOptions{})
-
-	if err != nil {
-		return err
-	}
-
-	if deployment.Status.Replicas != deployment.Status.AvailableReplicas {
-		// Maybe the old scaling isn't completed yet
-		return fmt.Errorf("number of replicas instable, won't scale now")
-	}
-
+func (as Autoscaler) evaluateRules(replicas int32) int32 {
 	log.Debug("Tick. Evaluate all metrics..")
 	// asynchronously evaluate metrics
 	for _, rule := range as.rules {
 		waitGroup.Add(1)
-		go as.evaluateRule(rule, deployment.Status.Replicas)
+		go as.evaluateRule(rule, replicas)
 	}
 	// Wait for all rules to be evaluated
 	waitGroup.Wait()
@@ -209,7 +207,23 @@ func (as Autoscaler) evaluateRules() error {
 		weightedReplicas += desiredReplicas * float64(priority)
 	}
 
-	newDesiredReplicas := int32(math.Round(weightedReplicas / float64(weights)))
+	return int32(math.Round(weightedReplicas / float64(weights)))
+}
+
+func (as Autoscaler) evaluateRulesForDeployments() error {
+	deployments := as.kubeclientset.AppsV1().Deployments(as.target.Namespace)
+	deployment, err := deployments.Get(as.target.Name, metav1.GetOptions{})
+
+	if err != nil {
+		return err
+	}
+
+	if *deployment.Spec.Replicas != deployment.Status.ReadyReplicas {
+		// Maybe the old scaling isn't completed yet
+		return fmt.Errorf("number of replicas instable, won't scale now")
+	}
+
+	newDesiredReplicas := as.evaluateRules(deployment.Status.Replicas)
 
 	if newDesiredReplicas > as.maxReplicas {
 		newDesiredReplicas = as.maxReplicas
@@ -226,7 +240,45 @@ func (as Autoscaler) evaluateRules() error {
 
 		if err == nil {
 			log.Info("Scaled deployment!")
-			as.calmdown = true
+			calmdown = true
+		}
+		return err
+	}
+
+	return err
+}
+
+func (as Autoscaler) evaluateRulesForStatefulSets() error {
+	statefulsets := as.kubeclientset.AppsV1().StatefulSets(as.target.Namespace)
+	statefulset, err := statefulsets.Get(as.target.Name, metav1.GetOptions{})
+
+	if err != nil {
+		return err
+	}
+
+	if *statefulset.Spec.Replicas != statefulset.Status.ReadyReplicas {
+		// Maybe the old scaling isn't completed yet
+		return fmt.Errorf("number of replicas instable, won't scale now")
+	}
+
+	newDesiredReplicas := as.evaluateRules(statefulset.Status.Replicas)
+
+	if newDesiredReplicas > as.maxReplicas {
+		newDesiredReplicas = as.maxReplicas
+	} else if newDesiredReplicas < as.minReplicas {
+		newDesiredReplicas = as.minReplicas
+	}
+
+	if newDesiredReplicas != statefulset.Status.Replicas {
+		log.Infof("New desired replica count: %d", newDesiredReplicas)
+
+		// New desired Replicas! Should scale..
+		statefulset.Spec.Replicas = &newDesiredReplicas
+		_, err := statefulsets.Update(statefulset)
+
+		if err == nil {
+			log.Info("Scaled deployment!")
+			calmdown = true
 		}
 		return err
 	}

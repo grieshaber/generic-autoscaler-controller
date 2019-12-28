@@ -12,15 +12,12 @@
 
 package util
 
-type MetricEvaluation struct {
-	LastDelta      int64
-	AvgDelta	   int64
-	NumIterations int64
-	ViolationCount []float64
-	Replicas       float64
-	Higher         bool
+type Target struct {
+	Namespace string
+	Name string
+	Kind string
 }
 
-func NewMetricEvaluation(replicas float64, delta int64) *MetricEvaluation {
-	return &MetricEvaluation{0, delta, 0, make([]float64, 1, 5), replicas, false}
+func NewTarget(namespace string, name string, kind string) *Target {
+	return &Target{Namespace: namespace, Name: name, Kind: kind}
 }

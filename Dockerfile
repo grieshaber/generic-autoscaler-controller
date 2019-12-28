@@ -11,7 +11,6 @@ RUN dep ensure -vendor-only
 COPY . /go/src/github.com/grieshaber/generic-autoscaler-controller/
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /bin/generic-autoscaler-controller .
 
-
 FROM scratch
 COPY --from=builder /bin/generic-autoscaler-controller /bin/generic-autoscaler-controller
 ENTRYPOINT ["/bin/generic-autoscaler-controller"]

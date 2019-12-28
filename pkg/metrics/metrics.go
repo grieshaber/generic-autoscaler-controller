@@ -14,6 +14,7 @@ package metrics
 
 import (
 	"encoding/json"
+	log "github.com/Sirupsen/logrus"
 	v1 "github.com/grieshaber/generic-autoscaler-controller/pkg/apis/autoscalingrule/v1"
 	"k8s.io/client-go/kubernetes"
 	"time"
@@ -54,20 +55,30 @@ func GetMetrics(clientset *kubernetes.Clientset, namespace string, autoMode v1.A
 
 	valueData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces", namespace, "services/*", autoMode.ValueMetric).DoRaw()
 	if err != nil {
+		log.Infof("Error value: %v", err)
 		return valueMetric, deltaMetric, err
 	}
 
 	err = json.Unmarshal(valueData, &valueMetric)
 
 	if err != nil {
+		log.Infof("Error unmarshalling value: %v", err)
 		return valueMetric, deltaMetric, err
 	}
-
+	log.Infof("Value: %v", valueMetric)
 	deltaData, err := clientset.RESTClient().Get().AbsPath("/apis/custom.metrics.k8s.io/v1beta1/namespaces", namespace, "services/*", autoMode.DeltaMetric).DoRaw()
 	if err != nil {
+		log.Infof("Error delta: %v", err)
 		return valueMetric, deltaMetric, err
 	}
 
 	err = json.Unmarshal(deltaData, &deltaMetric)
+
+	if err != nil {
+		log.Infof("Error delta: %v", err)
+	} else {
+		log.Infof("Delta: %v", deltaMetric)
+	}
+
 	return valueMetric, deltaMetric, err
 }

@@ -28,7 +28,7 @@ metadata:
   name: deployment-access
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
+    resources: ["deployments", "statefulsets"]
     verbs: ["*"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -86,5 +86,6 @@ spec:
       containers:
         - name: generic-autoscaler-controller-container
           image: freddyfroehlich/generic-autoscaler-controller:latest
+          args: ["-rulesNamespace", "autoscaling", "-targetNamespace", "workload-sim", "-minReplicas", "0"]
       imagePullSecrets:
         - name: regcred

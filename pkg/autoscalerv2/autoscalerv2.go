@@ -31,22 +31,22 @@ var (
 	waitGroup                         *sync.WaitGroup
 	calmdown                          bool
 	previousViolationCountIncreasment float64
+	anomalyDelta                      bool
 )
 
 type Autoscalerv2 struct {
-	kubeclientset       *kubernetes.Clientset
-	interval            time.Duration
-	deploymentNamespace string
-	deploymentName      string
-	calmdownIntervals   int64
-	rules               map[string]*v1.AutoscalingRule
-	metricEvaluations   map[*v1.AutoscalingRule]*util.MetricEvaluation
-	minReplicas         int32
-	maxReplicas         int32
+	kubeclientset     *kubernetes.Clientset
+	interval          time.Duration
+	target            util.Target
+	calmdownIntervals int64
+	rules             map[string]*v1.AutoscalingRule
+	metricEvaluations map[*v1.AutoscalingRule]*util.MetricEvaluation
+	minReplicas       int
+	maxReplicas       int
 }
 
-func New(kubeclientset *kubernetes.Clientset, interval time.Duration, deploymentNamespace string, deploymentName string, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int32, maxReplicas int32) *Autoscalerv2 {
-	return &Autoscalerv2{kubeclientset: kubeclientset, interval: interval, deploymentNamespace: deploymentNamespace, deploymentName: deploymentName, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
+func New(kubeclientset *kubernetes.Clientset, interval time.Duration, target util.Target, calmdownIntervals int64, rules map[string]*v1.AutoscalingRule, minReplicas int, maxReplicas int) *Autoscalerv2 {
+	return &Autoscalerv2{kubeclientset: kubeclientset, interval: interval, target: target, calmdownIntervals: calmdownIntervals, rules: rules, metricEvaluations: make(map[*v1.AutoscalingRule]*util.MetricEvaluation),
 		minReplicas: minReplicas, maxReplicas: maxReplicas}
 }
 
@@ -66,8 +66,15 @@ func (as Autoscalerv2) Run() {
 					calmdown = false
 				}
 			} else {
-				if err := as.evaluateRules(); err != nil {
-					log.Error("Error while evaluating rules", err)
+				switch as.target.Kind {
+				case "Deployment":
+					if err := as.evaluateRulesForDeployments(); err != nil {
+						log.Error("Error while evaluating rules", err)
+					}
+				case "StatefulSet":
+					if err := as.evaluateRulesForStatefulSets(); err != nil {
+						log.Error("Error while evaluating rules", err)
+					}
 				}
 			}
 		}
@@ -79,9 +86,9 @@ func (as Autoscalerv2) calculateNewReplicas(replicasOld int32, countSlope float6
 	case countSlope > 1:
 		return math.Min(float64(as.maxReplicas), policies.Strong.UpScalingFunction(replicasOld))
 	case countSlope > 0.5:
-		return math.Min(float64(as.maxReplicas), policies.Strong.UpScalingFunction(replicasOld))
+		return math.Min(float64(as.maxReplicas), policies.Medium.UpScalingFunction(replicasOld))
 	case countSlope > 0:
-		return math.Min(float64(as.maxReplicas), policies.Strong.UpScalingFunction(replicasOld))
+		return math.Min(float64(as.maxReplicas), policies.Mild.UpScalingFunction(replicasOld))
 	case countSlope < 0:
 		return policies.DownScalingFunction(replicasOld, limit, desired)
 	default:
@@ -104,6 +111,7 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 	)
 
 	valueAsInt := value.MilliValue()
+
 	if delta == 0 {
 		violationCountIncrease = prevIncreasment * 0.5
 		newCount = latestCount + violationCountIncrease
@@ -123,10 +131,17 @@ func (as Autoscalerv2) calculateNewViolationCount(rule *v1.AutoscalingRule, valu
 		}
 
 		diffToLimit := util.Abs(valueAsInt - limit)
-		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta) - as.calmdownIntervals, 1)
+		intervalsUntilLimit := util.Max64(diffToLimit/util.Abs(delta)-as.calmdownIntervals, 1)
 		remainingViolationCount := math.Abs(factor*rule.Spec.AutoMode.Limits.MaxViolationCount - latestCount)
 		violationCountIncrease = factor * (remainingViolationCount / float64(intervalsUntilLimit))
 		newCount = latestCount + violationCountIncrease
+
+		if anomalyDelta {
+			// Wait one more intervall
+			log.Debug("Anomaly! Won't increase Count now")
+			newCount = latestCount
+		}
+
 		log.Debugf("diff: %v, intsUntil: %v, remainingCount: %v, violationCountIn: %v, newCount: %v", diffToLimit, intervalsUntilLimit, remainingViolationCount, violationCountIncrease, newCount)
 	}
 
@@ -143,14 +158,9 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	defer waitGroup.Done()
 	log.Debugf("Evaluating rule %s", rule.Name)
 
-	if _, initialized := as.metricEvaluations[rule]; !initialized {
-		log.Debugf("Initializing new MetricEvaluation Object for rule %s", rule.Name)
-		as.metricEvaluations[rule] = util.NewMetricEvaluation(float64(replicasOld))
-	}
-
 	valueMetric, deltaMetric, err := metrics.GetMetrics(as.kubeclientset, rule.Spec.TargetNamespace, rule.Spec.AutoMode)
 	if err != nil || len(valueMetric.Items) == 0 {
-		log.Errorf("Could not retrieve metrics for rule %s", rule.Name, err)
+		log.Errorf("Could not retrieve metrics for rule %s: %v", rule.Name, err)
 		return
 	}
 
@@ -168,7 +178,26 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 	}
 	log.Debugf("Current Delta: %v", delta)
 
+	if _, initialized := as.metricEvaluations[rule]; !initialized {
+		log.Debugf("Initializing new MetricEvaluation Object for rule %s", rule.Name)
+		as.metricEvaluations[rule] = util.NewMetricEvaluation(float64(replicasOld), delta.MilliValue())
+	}
+
 	metricEvaluation := as.metricEvaluations[rule]
+	metricEvaluation.NumIterations = metricEvaluation.NumIterations + 1
+
+	if delta.MilliValue() > 10*metricEvaluation.AvgDelta {
+		log.Debugf("Delta seems to be anomal %d -> %d", delta, metricEvaluation.AvgDelta)
+		if anomalyDelta {
+			anomalyDelta = false
+		} else {
+			anomalyDelta = true
+		}
+	} else {
+		anomalyDelta = false
+	}
+
+	metricEvaluation.AvgDelta = metricEvaluation.AvgDelta + delta.MilliValue()/metricEvaluation.NumIterations
 
 	weightedDelta := int64(math.Round(0.9*float64(delta.MilliValue()) + 0.1*float64(metricEvaluation.LastDelta)))
 	metricEvaluation.LastDelta = weightedDelta
@@ -184,30 +213,18 @@ func (as Autoscalerv2) evaluateRule(rule *v1.AutoscalingRule, replicasOld int32)
 
 	if math.Abs(lastViolationCount) >= rule.Spec.AutoMode.Limits.MaxViolationCount {
 		log.Debug("Bingo, need to scale!")
-		metricEvaluation.Replicas = as.calculateNewReplicas(replicasOld, countSlope, value.MilliValue(), rule.Spec.AutoMode.Limits.DesiredUsage.MilliValue())
+		metricEvaluation.Replicas = as.calculateNewReplicas(replicasOld, countSlope, rule.Spec.AutoMode.Limits.LowerLimit.MilliValue(), rule.Spec.AutoMode.Limits.DesiredUsage.MilliValue())
 
 		metricEvaluation.ViolationCount = make([]float64, 1, 5)
 	}
 }
 
-func (as Autoscalerv2) evaluateRules() error {
-	deployments := as.kubeclientset.AppsV1().Deployments(as.deploymentNamespace)
-	deployment, err := deployments.Get(as.deploymentName, metav1.GetOptions{})
-
-	if err != nil {
-		return err
-	}
-
-	if deployment.Status.Replicas != deployment.Status.AvailableReplicas {
-		// Maybe the old scaling isn't completed yet
-		return fmt.Errorf("number of replicas instable, won't scale now")
-	}
-
+func (as Autoscalerv2) evaluteRules(replicas int32) int32 {
 	log.Debug("Tick. Evaluate all metrics..")
 	// asynchronously evaluate metrics
 	for _, rule := range as.rules {
 		waitGroup.Add(1)
-		go as.evaluateRule(rule, deployment.Status.Replicas)
+		go as.evaluateRule(rule, replicas)
 	}
 	// Wait for all rules to be evaluated
 	waitGroup.Wait()
@@ -228,9 +245,25 @@ func (as Autoscalerv2) evaluateRules() error {
 		weightedReplicas += desiredReplicas * float64(priority)
 	}
 
-	newDesiredReplicas := int32(math.Round(weightedReplicas / float64(weights)))
+	return int32(math.Round(weightedReplicas / float64(weights)))
+}
 
-	if newDesiredReplicas != deployment.Status.Replicas {
+func (as Autoscalerv2) evaluateRulesForDeployments() error {
+	deployments := as.kubeclientset.AppsV1().Deployments(as.target.Namespace)
+	deployment, err := deployments.Get(as.target.Name, metav1.GetOptions{})
+
+	if err != nil {
+		return err
+	}
+
+	if deployment.Status.Replicas != deployment.Status.ReadyReplicas {
+		// Maybe the old scaling isn't completed yet
+		return fmt.Errorf("number of replicas instable, won't scale now")
+	}
+
+	newDesiredReplicas := as.evaluteRules(deployment.Status.Replicas)
+
+	if newDesiredReplicas != deployment.Status.ReadyReplicas {
 		log.Infof("New desired replica count: %d", newDesiredReplicas)
 
 		// New desired Replicas! Should scale..
@@ -239,6 +272,38 @@ func (as Autoscalerv2) evaluateRules() error {
 
 		if err == nil {
 			log.Info("Scaled deployment!")
+			calmdown = true
+		}
+		return err
+	}
+
+	return err
+}
+
+func (as Autoscalerv2) evaluateRulesForStatefulSets() error {
+	statefulsets := as.kubeclientset.AppsV1().StatefulSets(as.target.Namespace)
+	statefulset, err := statefulsets.Get(as.target.Name, metav1.GetOptions{})
+
+	if err != nil {
+		return err
+	}
+
+	if statefulset.Status.Replicas != statefulset.Status.ReadyReplicas {
+		// Maybe the old scaling isn't completed yet
+		return fmt.Errorf("number of replicas instable, won't scale now")
+	}
+
+	newDesiredReplicas := as.evaluteRules(statefulset.Status.Replicas)
+
+	if newDesiredReplicas != statefulset.Status.ReadyReplicas {
+		log.Infof("New desired replica count: %d", newDesiredReplicas)
+
+		// New desired Replicas! Should scale..
+		statefulset.Spec.Replicas = &newDesiredReplicas
+		_, err := statefulsets.Update(statefulset)
+
+		if err == nil {
+			log.Info("Scaled statefulset!")
 			calmdown = true
 		}
 		return err

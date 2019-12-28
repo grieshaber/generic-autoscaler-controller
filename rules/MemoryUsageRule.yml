@@ -4,11 +4,11 @@ metadata:
   name: memory-usage-rule
   namespace: autoscaling
 spec:
-  targetNamespace: workload-sim
-  metricName: de_hhu_bsinfo_Storage_MemoryUsage
+  targetNamespace: aerospike
+  metricName: aerospike_ns_memory_usage
   modes:
-    upscaling: strong
-    downscaling: medium
+    upscaling: mild
+    downscaling: mild
   priority: 5
   thresholds:
     upperThreshold: 800m
